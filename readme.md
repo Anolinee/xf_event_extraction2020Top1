@@ -1,99 +1,250 @@
-# TableQA API Manual
-## 域名
-API Host URL
+# XF-Event-Extraction
+## 天池中医药NER冠军方案已经开源，欢迎star
+
+项目链接：https://github.com/z814081807/DeepNER
+
+2020
+科大讯飞事件抽取挑战赛
+
+比赛链接：http://challenge.xfyun.cn/topic/info?type=hotspot
+
+
+结果:
+| Name     | Score |  Rank|Team member| 
+| :--------|:------|:----|:----------|
+|我是蛋糕王 | 0.73859| 1   |https://github.com/WuHuRestaurant<br>https://github.com/aker218|
+
+
+事件抽取系统，包含触发词（trigger），事件论元（role），事件属性（attribution）的抽取。基于 pytorch 的 pipeline 解决方案。
+
+## 主要思路
+
+将任务分割为**触发词抽取**，**论元抽取**，**属性抽取**。具体而言是论元和属性的抽取结果依赖于**触发词**，因此只有一步误差传播。**因 time loc 并非每个句子中都存在，并且分布较为稀疏，因此将 time & loc 与 sub & obj 的抽取分开（role1 提取 sub & obj；role2 提取 time & loc）**
+
+模型先进行**触发词提取**，由于复赛数据集的特殊性，模型限制抽取的事件仅有一个，**如果抽取出多个触发词，选择 logits 最大的 trigger 作为该句子的触发词**，如果没有抽取触发词，筛选整个句子的 logits，取 argmax 来获取触发词；
+
+然后根据触发词抽取模型抽取的触发词，分别输入到 role1 & role2 & attribution 模型中，进行后序的论元提取和属性分类；四种模型都是基于 Roberta-wwm 进行实验，加入了不同的特征。
+
+最后将识别的结果进行整合，得到提交文件。
+
+### pipeline 思路如下：
+<div align=center><img width="400" height="300" alt="pipeline" src="./imgs/pipeline.png"/></div>
+
+### trigger 提取器：
+trigger 提取采用的特征是**远程监督 trigger**，把所有标注数据当做一个知识库，对当前文本进行匹配。注：在训练时，需要排除自身的label，我们采用的是KFold的训练集 distant trigger 构造，即将训练集分成K份，用前K-1份的所有label当做后一份的知识库，构造训练数据的distant trigger；test 时候采用所有 trigger。
+在测试时若出现预测为空，选取 distant trigger logits 最大的解码输出 trigger。
+具体模型如下：
+<div align=center><img width="400" height="300" alt="trigger" src="./imgs/trigger.png"/></div>
+
+### role 提取器：
+role 采用的特征是**trigger的相对距离**，然后采用了苏神的 **Conditional Layer Norm** 来让整个句子融入 trigger 信息，同样采用 Span 解码的方式。由于数据中 subject/object 分布相似，同时与 time/loc 分布相差很大，我们进一步进行了优化，将前两者和后两者的抽取分开，防止 time/loc 的数据对 subject/object 的 logits 稀疏化。
+<div align=center><img width="400" height="300" alt="role" src="./imgs/role.png"/></div>
+
+### attribution 分类器：
+attribution 分类器并没有进行特殊优化，采用了一个**动态窗口**的方法，我们认为某一 trigger 的 tense & polarity 只与其附近的语境有关，因此我们设定了一个窗口，对该窗口内进行 pooling 操作，然后利用 pooling 后的 logits 进行多任务学习，同时分类出 tense 和 polarity。因属性数据类别不均及其严重，最后我们用 ERNIE 模型做了一个10折交叉验证，有较大的提升。
+<div align=center><img width="400" height="300" alt="attribution" src="./imgs/attribution.png"/></div>
+
+### 数据增强：
+本次比赛主要的上分点在于数据增强的工作，初赛和复赛数据的分布差别极大，一起训练反而会导致结果下降。因此我们做了一个初赛数据筛选的工作，筛选出与复赛数据分布相近的数据进行增量训练。主要流程详见PPT中**基于标签验证的数据增强部分**。
+
+## 项目运行主要环境
+
+运行系统：
+
 ```python
-http://180.184.68.175:9003
+Ubuntu 18.04.4
 ```
-## 验证
+
+---
+
+python:
+
 ```python
-User: yuyitest 
-Password: KismetFTW123
-```
-## API文档
-## 表格问答 ```/tableqa/```
-### post
-输入一批表格及问题，返回SQL语句
-### 请求参数
-#### schema
-参数 | 类型 | 是否必选 | 示例值 |描述
------|------|-----|-----|-----
-db_id | string | 是 | "文集"  | 输入多表格名称
-table_names | list | 是 | ["作者","文集"]  | 输入各表格名称
-column_names | list | 是 | [[-1,"*"],[0,"姓名"],[0,"国籍"],[1,"页数"],[1,"定价"] | 各列名称
-column_types | list | 是 | ["text","text","number","number"] | 每列数据类型
-foreign_keys | list | 否 | [[3,1][2,1]] | 外键约束
-primary_keys | list | 否 | [1] | 主键约束
-
-#### content
-参数 | 类型 | 是否必选 | 示例值 |描述
------|------|-----|-----|-----
-db_id | string | 是 | "文集"  | 输入多表格名称
-tables | dict | 是 | {"作者":{"cell":[["鲁迅", "中国"], ["郭沫若", "中国"]],"header":["姓名","国籍"],"table_name":"作者","type":["text","text"]},"文集":…} | 表中内容
-
-#### questions
-参数 | 类型 | 是否必选 | 示例值 |描述
------|------|-----|-----|-----
-db_id | string | 是 | "文集"  | 提问表格名称
-question | string | 是 | "哪些作家没有写过文集？给出这些作家名字和国籍。" | 问题
-question_id | string | 否 | 0001 | 问题编号
-
-### 示例
-###### 请求示例
-```json
-{"schema":[{"db_id": "文集",
-          "table_names": ["作者","文集"],
-          "column_names": [[-1,"*"],[0,"词条id"],[0,"姓名"],[0,"国籍"],[0,"毕业院校"],[0,"民族"],[1,"词条id"],[1,"名称"],[1,"作者id"],[1,"页数"],[1,"定价"],[1,"出版社"],[1,"出版时间"],[1,"开本"]],
-          "column_types": ["text","number","text","text","text","text","number","text","number","number","number","text","time","text"],
-          "foreign_keys": [[8,1]],
-          "primary_keys": [1,6]},
-          {"db_id": "智能音箱",
-           "table_names": ["公司","音箱产品","产品销售"],
-           "column_names": [[-1,"*"],[0,"词条id"],[0,"名称"],[0,"所属国家"],[0,"智能音箱款数"],[0,"排名"],[1,"词条id"][1,"名称"],[1,"所属公司id"],[1,"售价"],[1,"排名"],[1,"上升名次"],[2,"产品id"],[2,"季度"],[2,"销售量"],[2,"销售量增长"]],
-           "column_types": ["text","number","text","text","number","number","number","text","number","number","number","number","number","text","number","number"],
-           "foreign_keys": [[8,1],[12,6]],
-           "primary_keys": [1,6]}],
-"content":[{"db_id": "文集",
-            "tables": {"作者": {"cell": [["item_book.2_6_56","鲁迅","中国","南京矿路学堂","汉族"],["item_book.2_6_57","郭沫若","中国","北师学堂","满族"],["item_book.2_6_58","冰心","中国","燕京大学","回族"],["item_book.2_6_59","张恨水","中国","九州帝国大学","土家族"],["item_book.2_6_60","贾平凹","中国","九州帝国大学","傣族"]],
-                                "header": ["词条id","姓名","国籍","毕业院校","民族"],
-                                "table_name": "作者",
-                                "type": ["number","text","text","text","text"]},
-                       "文集": {"cell": [["item_book.2_6_61","鲁迅全集","item_book.2_6_57","200","2.8","人民文学出版社","1982-07-21","32开"],["item_book.2_6_62","郭沫若全集","item_book.2_6_57","230","4","译林出版社","1983-06-21","17开"],["item_book.2_6_63","路遥集","item_book.2_6_58","250","5","安徽人民出版社","1989-11-21","15开"],["item_book.2_6_64","冰心全集","item_book.2_6_56","400","20","武汉文艺出版社","1988-07-21","20开"],["item_book.2_6_65","贾平凹全集","item_book.2_6_59","500","28","安徽人民出版社","1990-03-02","16开"]],
-                                "header": ["词条id","名称","作者id","页数","定价","出版社","出版时间","开本"],
-                                "table_name": "文集",
-                                "type": ["number","text","number","number","number","text","time","text"]}}},
-          {"db_id": "智能音箱",
-           "tables": {"产品销售": {"cell": [["item_product_7_51","1","1万","20%"],["item_product_7_54","4","300万","80%"],["item_product_7_55","1","300万","20%"],["item_product_7_54","1","300万","20%"],["item_product_7_52","4","1万","20%"]],
-                                  "header": ["产品id","季度","销售量","销售量增长"],
-                                  "table_name": "产品销售",
-                                  "type": ["number","text","number","number"]},
-                       "公司": {"cell": [["item_product_7_46","百度","中国","1","1"],["item_product_7_47","阿里巴巴集团","美国","8","10"],["item_product_7_48","小米公司","韩国","1","1"],["item_product_7_49","亚马逊集团","日本","8","1"],["item_product_7_50","微软公司","德国","1","1"]],
-                                "header": ["词条id","名称","所属国家","智能音箱款数","排名"],
-                                "table_name": "公司",
-                                "type": ["number","text","text","number","number"]},
-                       "音箱产品": {"cell": [["item_product_7_51","小爱","item_product_7_46","89","1","-3"],["item_product_7_52","天猫精灵","item_product_7_47","599","20","+3"],["item_product_7_53","小度在家","item_product_7_47","89","20","+3"],["item_product_7_54","小度音箱","item_product_7_50","89","1","+3"],["item_product_7_55","亚马逊echo","item_product_7_46","89","1","+3"]],
-                                   "header": ["词条id","名称","所属公司id","售价","排名","上升名次"],
-                                   "table_name": "音箱产品",
-                                   "type": ["number","text","number","number","number","number"]}}}],
-"questions":[{"db_id": "智能音箱", 
-        "question": "比89元便宜的音箱产品有哪些，并给出它们原来的排名", 
-        "question_id": "qid0001"},
-        {"db_id": "智能音箱", 
-        "question": "给出不属于公司智能音箱总共不超过70款的国家，以及这些国家有哪些公司", 
-        "question_id": "qid0002"},
-        {"db_id": "智能音箱", 
-        "question": "给出原排名在10名及之外的音箱产品和原排名", 
-        "question_id": "qid0003"},
-        {"db_id": "文集", 
-        "question": "不属于作者最少的两个国籍，给出其他国家的作者的名字", 
-        "question_id": "qid0004"}]}
+python3.7
 ```
 
-###### 返回示例
-```sql
-select 名称 , 排名 - 上升名次 from 音箱产品 where 售价 < 89
-select 名称 from 公司 where 所属国家 not in ( select 所属国家 from 公司 group by 所属国家 having sum ( 智能音箱款数 ) <= 70 )
-select 名称 , 排名 + 上升名次 from 音箱产品 where 排名 + 上升名次 >= 10
-select 姓名 from 作者 where 国籍 not in ( select 国籍 from 作者 group by 国籍 order by count ( * ) asc limit 2 )
+----
+
+python 运行环境，可以通过以下代码完成依赖包安装：
+
+```python
+pip install -r requirements.txt
+```
+
+```python
+transformers==2.10.0
+pytorch_crf==0.7.2
+numpy==1.16.4
+torch==1.5.1+cu101
+tqdm==4.46.1
+scikit_learn==0.23.2
+torchcrf==1.1.0
+```
+
+CUDA:
+
+```python
+CUDA Version: 10.2  Driver 440.100 GPU：Tesla V100 (32G) * 2
+```
+
+## 项目目录说明
+
+```shell
+xf_ee
+├── data                                    # 数据文件夹
+│   ├── final                               # 复赛数据(处理过的)
+│   │   ├── mid_data                        # 中间数据 （词典等）
+│   │   ├── preliminary_clean               # 清洗后的初赛数据
+│   │   └── raw_data                        # 复赛经过初步清洗后的 raw_data
+│   └── preliminary                         # 初赛数据（略）
+│
+├── out                                     # 存放训练的模型
+│   ├── final                               # 复赛各个单模型（trigger/role/attribution）
+│   └── stack                               # 十折交叉验证的 attribution 模型
+│
+├── script/final                            # 放训练 / 评估 / 测试 的脚本
+│   ├── train.sh                            
+│   ├── dev.sh                     
+│   └── test.sh                
+│
+├── src_final
+│   ├── features_analysis                   # 数据分析
+│   │   └── images                          # 分析时画得一些图 
+│   ├── preprocess                       
+│   │   ├── convert_raw_data.py             # 处理转换原始数据
+│   │   ├── convert_raw_data_preliminary.py     # 转换初赛数据为复赛格式并处理
+│   │   └── processor.py                    # 转换数据为 Bert 模型的输入
+│   ├── utils                      
+│   │   ├── attack_train_utils.py           # 对抗训练 FGM / PGD
+│   │   ├── dataset_utils.py                # torch Dataset
+│   │   ├── evaluator.py                    # 模型评估
+│   │   ├── functions_utils.py              # 跨文件调用的一些 functions
+│   │   ├── model_utils.py                  # 四个任务的 models
+│   │   ├── options.py                      # 命令行参数
+│   |   └── trainer.py                      # 训练器
+|
+├── 答辩PPT                                 # 决赛PPT
+├── dev.py                                  # 用于模型评估
+├── ensemble_predict.py                     # 用百度 ERNIE 模型对 attribution 十折交叉验证
+├── predict_preliminary.py                  # 对初赛数据进行清洗
+├── readme.md                               # ...
+├── test.py                                 # pipeline 预测复赛数据 （包含 ensemble）
+└── train.py                                # 模型训练
+```
+
+## 使用说明
+
+### 数据转换
+
+数据转换部分只提供代码和已经转换好的数据，具体操作在 **src_final/preprocess**中的 convert_raw_data中，包含对初赛/复赛数据的清洗和转换。
+
+### 训练阶段
+
+```shell
+bash ./script/final/train.sh
+```
+
+注：**脚本中指定的 BERT_DIR 指BERT所在文件夹，BERT采用的是哈工大的全词覆盖wwm模型，下载地址 https://github.com/ymcui/Chinese-BERT-wwm ，自行下载并制定对应文件夹，并将 vocab.txt 中的两个 unused 改成 [INV] 和 [BLANK]（详见 processor 代码中的 fine_grade_tokenize）**
+
+**如果设备显存不够，自行调整 train_batch_size，脚本中的 batch_size（32）在上述环境中占用显存为16G**
+
+**最终训练的结果是每一个 epoch 下存一次，线下评估结果在 eval_metric.txt 下，保留最优线下结果作为训练结果，其余删掉即可**
+
+可更改的公共参数有
+
+```
+lr: bert 模块的学习率
+other_lr: 除了bert模块外的其他学习率（差分学习率）
+weight_decay：...
+attack_train： 'pgd' / 'fgm' / '' 对抗训练 fgm 训练速度慢一倍, pgd 慢两倍，但是效果都有提升
+swa_start: 滑动权重平均开始的epoch
+```
+
+##### trigger提取模型训练 （TASK_TYPE=“trigger”）
+
+可更改的参数有
+
+```python
+use_distant_trigger: 是否使用复赛数据构造的远程监督库中的 trigger 信息
+```
+
+##### role 提取模型训练 （TASK_TYPE=“role1/role2”）
+
+可更改的参数有
+
+```python
+use_trigger_distance: 是否使用句子中的其他词到 trigger 的距离这一个特征
+```
+
+**attribution 分类模型训练 （TASK_TYPE=“attribution”）**
+
+未使用其他特征
+
+
+
+**MODE=“stack”** 时候对 attribution 任务进行十折交叉验证，换用百度 ERNIE1.0 模型作为预训练模型
+
+### 验证阶段
+
+```shell
+bash ./script/final/dev.sh
+```
+
+主要的参数有三个：
+
+* TASK_TYPE：需要验证任务的 type
+* start/end threshold ：trigger / role1 model 需要进行调整的阈值
+* dev_dir: 需要验证的模型的文件夹
+
+### 测试阶段
+
+```shell
+bash ./script/final/test.sh
+```
+
+利用训练最优的四个单模型进行 pipeline 式的预测 sentences.json 文件，获取最终的 submit 文件，
+
+其中 **submit_{version},json** 为四个单模型的结果， **submit_{version}_ensemble_,json** 为单模型 + attribution 交叉验证后的结果。
+
+四个任务 model 的上级文件夹必须指定，同时文件夹名称应包含模型的参数特征。
+
+* **trigger_ckpt_dir**：              trigger 所在的文件夹
+* **role1_ckpt_dir**：                 role1 所在的文件夹
+* **role2_ckpt_dir：**                 role2 所在的文件夹
+* **attribution_ckpt_dir：**    attribution所在的文件夹
+
+## 测试效果 
+
+|     classification      |    score    |
+| :---------------------: | :---------: |
+|     submit_v1.json      |   0.73684   |
+| submit_v1_ensemble.json | **0.73859** |
+
+### 各阶段提升
+<div align=center><img width="500" height="250" alt="res" src="./imgs/res.png"/></div>
+
+---
+### 数据增强
+
+
+在我们的训练过程中，实际使用了组委会提供的初赛(经过清洗和转换)+复赛数据进行训练，在项目内部提供了清洗完毕的初赛数据；具体清洗流程如下所示：
+
+* 只使用复赛数据train得到trigger抽取模型和role1抽取模型(需指定model的上级文件夹)
+
+    **trigger_simple_ckpt_dir**：             单独复赛数据train trigger 所在的文件夹
+    **role1_simple_ckpt_dir**：               单独复赛数据train role1 所在的文件夹
+* 使用predict_prelimiary.py调用train好的trigger model 和role1 model 预测初赛数据的trigger和sub/ob
+
+```python
+python predict_preliminary.py --dev_dir_trigger trigger_simple_ckpt_dir  --dev_dir_role role1_simple_ckpt_dir
+```
+* 运行src_final/preprocess下的convert_raw_data_preliminary.py
+```python
+python convert_raw_data_preliminary.py
+```
+* 运行src_final/preprocess下的convert_raw_data.py 即完成了初赛数据的清洗
+```python
+python convert_raw_data.py
 ```
 
 
