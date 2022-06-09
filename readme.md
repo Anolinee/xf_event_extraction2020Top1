@@ -40,8 +40,7 @@ question_id | string | 否 | 0001 | 问题编号
 ### 示例
 ###### 请求示例
 ```json
-{
-"schema":[{"db_id": "文集",
+{"schema":[{"db_id": "文集",
           "table_names": ["作者","文集"],
           "column_names": [[-1,"*"],[0,"词条id"],[0,"姓名"],[0,"国籍"],[0,"毕业院校"],[0,"民族"],[1,"词条id"],[1,"名称"],[1,"作者id"],[1,"页数"],[1,"定价"],[1,"出版社"],[1,"出版时间"],[1,"开本"]],
           "column_types": ["text","number","text","text","text","text","number","text","number","number","number","text","time","text"],
@@ -50,9 +49,9 @@ question_id | string | 否 | 0001 | 问题编号
           {"db_id": "智能音箱",
            "table_names": ["公司","音箱产品","产品销售"],
            "column_names": [[-1,"*"],[0,"词条id"],[0,"名称"],[0,"所属国家"],[0,"智能音箱款数"],[0,"排名"],[1,"词条id"][1,"名称"],[1,"所属公司id"],[1,"售价"],[1,"排名"],[1,"上升名次"],[2,"产品id"],[2,"季度"],[2,"销售量"],[2,"销售量增长"]],
-            "column_types": ["text","number","text","text","number","number","number","text","number","number","number","number","number","text","number","number"],
-            "foreign_keys": [[8,1],[12,6]],
-            "primary_keys": [1,6]},
+           "column_types": ["text","number","text","text","number","number","number","text","number","number","number","number","number","text","number","number"],
+           "foreign_keys": [[8,1],[12,6]],
+           "primary_keys": [1,6]}],
 "content":[{"db_id": "文集",
             "tables": {"作者": {"cell": [["item_book.2_6_56","鲁迅","中国","南京矿路学堂","汉族"],["item_book.2_6_57","郭沫若","中国","北师学堂","满族"],["item_book.2_6_58","冰心","中国","燕京大学","回族"],["item_book.2_6_59","张恨水","中国","九州帝国大学","土家族"],["item_book.2_6_60","贾平凹","中国","九州帝国大学","傣族"]],
                                 "header": ["词条id","姓名","国籍","毕业院校","民族"],
@@ -77,19 +76,25 @@ question_id | string | 否 | 0001 | 问题编号
                                    "type": ["number","text","number","number","number","number"]}}}],
 "questions":[{"db_id": "智能音箱", 
         "question": "比89元便宜的音箱产品有哪些，并给出它们原来的排名", 
-        "question_id": "qid000579"},
+        "question_id": "qid0001"},
         {"db_id": "智能音箱", 
         "question": "给出不属于公司智能音箱总共不超过70款的国家，以及这些国家有哪些公司", 
-        "question_id": "qid000455"},
+        "question_id": "qid0002"},
         {"db_id": "智能音箱", 
         "question": "给出原排名在10名及之外的音箱产品和原排名", 
-        "question_id": "qid000568"},
+        "question_id": "qid0003"},
         {"db_id": "文集", 
         "question": "不属于作者最少的两个国籍，给出其他国家的作者的名字", 
-        "question_id": "qid000358"}]
+        "question_id": "qid0004"}]}
 ```
 
-
+###### 返回示例
+```sql
+select 名称 , 排名 - 上升名次 from 音箱产品 where 售价 < 89
+select 名称 from 公司 where 所属国家 not in ( select 所属国家 from 公司 group by 所属国家 having sum ( 智能音箱款数 ) <= 70 )
+select 名称 , 排名 + 上升名次 from 音箱产品 where 排名 + 上升名次 >= 10
+select 姓名 from 作者 where 国籍 not in ( select 国籍 from 作者 group by 国籍 order by count ( * ) asc limit 2 )
+```
 
 
 
